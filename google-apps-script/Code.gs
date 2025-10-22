@@ -1,13 +1,48 @@
 /**
- * Hệ thống xếp hàng tự động với QR code
+ * Hệ thống xếp hàng tự động với QR code căn cước
  * Google Apps Script Backend
  */
 
 // Cấu hình
 const CONFIG = {
   SPREADSHEET_ID: 'YOUR_SPREADSHEET_ID', // Thay bằng ID của Google Sheet
-  SHEET_NAME: 'QueueData',
   WEBHOOK_URL: 'YOUR_WEBHOOK_URL' // URL của Netlify site
+};
+
+// Định nghĩa các sheet và cấu trúc dữ liệu
+const SHEET_CONFIG = {
+  DATAQUET: {
+    name: 'dataquet',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd_quet', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian']
+  },
+  HOSOMOI: {
+    name: 'hosomoi',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd_hsm', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban_hsm', 'thu_tuc_hsm']
+  },
+  HOSOBOSUNG: {
+    name: 'hosobosung',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd_hsbs', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban_hsbs', 'thu_tuc_hsbs']
+  },
+  THONGBAO: {
+    name: 'thongbao',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd_tb', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban_tb', 'thu_tuc_tb']
+  },
+  BAN_1: {
+    name: 'BAN_1',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban', 'thu_tuc']
+  },
+  BAN_2: {
+    name: 'BAN_2',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban', 'thu_tuc']
+  },
+  BAN_3: {
+    name: 'BAN_3',
+    headers: ['id', 'quet_qrcode_moi', 'ho_va_ten', 'ngay_sinh', 'cccd', 'ngay_cap', 'cmnd', 'dia_chi', 'thoi_gian', 'so_ban', 'thu_tuc']
+  },
+  DATATONG: {
+    name: 'datatong',
+    headers: ['ho_va_ten', 'gioi_tinh', 'ngay_sinh', 'cccd', 'so_bhxh', 'ngay_nop_hs', 'thang_huong', 'ngay_huong', 'het_han_huong', 'so_ban', 'tinh_trang']
+  }
 };
 
 /**
@@ -18,6 +53,8 @@ function doPost(e) {
     const data = JSON.parse(e.postData.contents);
     
     switch (data.action) {
+      case 'processQRCode':
+        return processQRCode(data.qrData, data.procedureType);
       case 'addToQueue':
         return addToQueue(data.data);
       case 'updateQueueStatus':
@@ -26,6 +63,8 @@ function doPost(e) {
         return callNextNumber(data.queueNumber, data.citizenInfo);
       case 'getQueueStatus':
         return getQueueStatus();
+      case 'getDataFromSheet':
+        return getDataFromSheet(data.sheetName, data.filters);
       default:
         return createResponse({ error: 'Action không được hỗ trợ' }, 400);
     }
