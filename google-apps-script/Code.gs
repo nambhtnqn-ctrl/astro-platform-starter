@@ -414,45 +414,88 @@ function callNextNumber(queueNumber, citizenInfo) {
 }
 
 /**
- * Lấy trạng thái hàng đợi
+ * Lấy dữ liệu từ sheet
  */
-function getQueueStatus() {
+function getDataFromSheet(sheetName, filters = {}) {
   try {
     const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    const sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
+    const sheet = spreadsheet.getSheetByName(sheetName);
     
     if (!sheet) {
-      return createResponse({
-        currentServing: 0,
-        totalInQueue: 0,
-        waitingCount: 0,
-        servingCount: 0
-      });
+      return createResponse({ error: 'Sheet không tồn tại' }, 404);
     }
     
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
-    const statusColumnIndex = headers.indexOf('Status');
-    const queueNumberColumnIndex = headers.indexOf('Queue Number');
+    const rows = data.slice(1);
     
-    let currentServing = 0;
+    // Lọc dữ liệu nếu có filters
+    let filteredRows = rows;
+    if (Object.keys(filters).length > 0) {
+      filteredRows = rows.filter(row => {
+        return Object.entries(filters).every(([key, value]) => {
+          const columnIndex = headers.indexOf(key);
+          return columnIndex !== -1 && row[columnIndex] === value;
+        });
+      });
+    }
+    
+    // Chuyển đổi thành object
+    const result = filteredRows.map(row => {
+      const obj = {};
+      headers.forEach((header, index) => {
+        obj[header] = row[index];
+      });
+      return obj;
+    });
+    
+    return createResponse({
+      success: true,
+      data: result,
+      total: result.length
+    });
+    
+  } catch (error) {
+    console.error('Error getting data from sheet:', error);
+    return createResponse({ error: 'Lỗi khi lấy dữ liệu từ sheet' }, 500);
+  }
+}
+
+/**
+ * Lấy trạng thái hàng đợi từ các sheet BAN
+ */
+function getQueueStatus() {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    
     let totalInQueue = 0;
+    let currentServing = 0;
     let waitingCount = 0;
     let servingCount = 0;
     
-    for (let i = 1; i < data.length; i++) {
-      const status = data[i][statusColumnIndex];
-      const queueNumber = data[i][queueNumberColumnIndex];
-      
-      if (status === 'serving') {
-        currentServing = queueNumber;
-        servingCount++;
-      } else if (status === 'waiting') {
-        waitingCount++;
-      }
-      
-      if (status !== 'completed') {
-        totalInQueue++;
+    // Kiểm tra tất cả các sheet BAN
+    const banSheets = [SHEET_CONFIG.BAN_1, SHEET_CONFIG.BAN_2, SHEET_CONFIG.BAN_3];
+    
+    for (const banConfig of banSheets) {
+      const sheet = spreadsheet.getSheetByName(banConfig.name);
+      if (sheet) {
+        const data = sheet.getDataRange().getValues();
+        if (data.length > 1) {
+          const headers = data[0];
+          const thuTucIndex = headers.indexOf('thu_tuc');
+          
+          for (let i = 1; i < data.length; i++) {
+            const thuTuc = data[i][thuTucIndex];
+            if (thuTuc === 'queue') {
+              totalInQueue++;
+              waitingCount++;
+            } else if (thuTuc === 'serving') {
+              totalInQueue++;
+              servingCount++;
+              currentServing = i; // Số thứ tự đang phục vụ
+            }
+          }
+        }
       }
     }
     
