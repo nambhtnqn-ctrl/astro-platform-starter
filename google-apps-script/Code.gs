@@ -75,53 +75,263 @@ function doPost(e) {
 }
 
 /**
- * Thêm người vào hàng đợi
+ * Xử lý QR code căn cước và lưu vào sheet tương ứng
+ */
+function processQRCode(qrData, procedureType = 'dataquet') {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    
+    // Parse QR code căn cước
+    const parsedData = parseCitizenIDQR(qrData);
+    
+    if (!parsedData) {
+      return createResponse({ error: 'Không thể đọc QR code căn cước' }, 400);
+    }
+    
+    // Xác định sheet đích dựa trên loại thủ tục
+    const targetSheetConfig = getSheetConfigByProcedure(procedureType);
+    if (!targetSheetConfig) {
+      return createResponse({ error: 'Loại thủ tục không hợp lệ' }, 400);
+    }
+    
+    // Lấy hoặc tạo sheet
+    let sheet = spreadsheet.getSheetByName(targetSheetConfig.name);
+    if (!sheet) {
+      sheet = createSheetWithHeaders(spreadsheet, targetSheetConfig);
+    }
+    
+    // Tạo dữ liệu để ghi
+    const rowData = createRowData(parsedData, targetSheetConfig, procedureType);
+    
+    // Ghi vào sheet
+    sheet.appendRow(rowData);
+    
+    // Gửi thông báo
+    sendWebhookNotification({
+      type: 'qr_processed',
+      procedureType: procedureType,
+      citizenName: parsedData.ho_va_ten,
+      cccd: parsedData.cccd_quet
+    });
+    
+    return createResponse({
+      success: true,
+      message: 'Đã xử lý QR code thành công',
+      data: parsedData,
+      sheetName: targetSheetConfig.name
+    });
+    
+  } catch (error) {
+    console.error('Error processing QR code:', error);
+    return createResponse({ error: 'Lỗi khi xử lý QR code' }, 500);
+  }
+}
+
+/**
+ * Parse QR code căn cước công dân
+ */
+function parseCitizenIDQR(qrData) {
+  try {
+    // QR code căn cước có format: 12 số CCCD + 9 số CMND + thông tin khác
+    const cleanData = qrData.replace(/\s+/g, ''); // Loại bỏ khoảng trắng
+    
+    if (cleanData.length < 21) {
+      throw new Error('QR code không đủ dài');
+    }
+    
+    // Lấy 12 số đầu làm CCCD
+    const cccd = cleanData.substring(0, 12);
+    
+    // Lấy 9 số tiếp theo làm CMND
+    const cmnd = cleanData.substring(12, 21);
+    
+    // Phần còn lại chứa thông tin khác (có thể cần parse thêm tùy format)
+    const remainingData = cleanData.substring(21);
+    
+    // Parse thông tin từ phần còn lại (cần điều chỉnh theo format thực tế)
+    const parsedInfo = parseAdditionalInfo(remainingData);
+    
+    return {
+      cccd_quet: cccd,
+      cmnd: cmnd,
+      ho_va_ten: parsedInfo.ho_va_ten || 'Chưa xác định',
+      ngay_sinh: parsedInfo.ngay_sinh || '',
+      ngay_cap: parsedInfo.ngay_cap || '',
+      dia_chi: parsedInfo.dia_chi || '',
+      quet_qrcode_moi: qrData,
+      thoi_gian: new Date()
+    };
+    
+  } catch (error) {
+    console.error('Error parsing QR code:', error);
+    return null;
+  }
+}
+
+/**
+ * Parse thông tin bổ sung từ QR code
+ * Cần điều chỉnh theo format thực tế của QR code căn cước
+ */
+function parseAdditionalInfo(data) {
+  // Đây là phần cần điều chỉnh theo format thực tế
+  // Ví dụ format có thể là: HOVATEN|NGAYSINH|DIACHI|...
+  
+  try {
+    // Giả sử format là pipe-separated
+    const parts = data.split('|');
+    
+    return {
+      ho_va_ten: parts[0] || '',
+      ngay_sinh: parts[1] || '',
+      dia_chi: parts[2] || '',
+      ngay_cap: parts[3] || ''
+    };
+  } catch (error) {
+    console.error('Error parsing additional info:', error);
+    return {
+      ho_va_ten: '',
+      ngay_sinh: '',
+      dia_chi: '',
+      ngay_cap: ''
+    };
+  }
+}
+
+/**
+ * Lấy cấu hình sheet theo loại thủ tục
+ */
+function getSheetConfigByProcedure(procedureType) {
+  const procedureMap = {
+    'dataquet': SHEET_CONFIG.DATAQUET,
+    'hosomoi': SHEET_CONFIG.HOSOMOI,
+    'hosobosung': SHEET_CONFIG.HOSOBOSUNG,
+    'thongbao': SHEET_CONFIG.THONGBAO,
+    'ban1': SHEET_CONFIG.BAN_1,
+    'ban2': SHEET_CONFIG.BAN_2,
+    'ban3': SHEET_CONFIG.BAN_3
+  };
+  
+  return procedureMap[procedureType] || SHEET_CONFIG.DATAQUET;
+}
+
+/**
+ * Tạo sheet với headers
+ */
+function createSheetWithHeaders(spreadsheet, sheetConfig) {
+  const sheet = spreadsheet.insertSheet(sheetConfig.name);
+  
+  // Thêm headers
+  sheet.getRange(1, 1, 1, sheetConfig.headers.length).setValues([sheetConfig.headers]);
+  
+  // Format headers
+  sheet.getRange(1, 1, 1, sheetConfig.headers.length)
+    .setFontWeight('bold')
+    .setBackground('#f0f0f0');
+  
+  return sheet;
+}
+
+/**
+ * Tạo dữ liệu dòng dựa trên sheet config
+ */
+function createRowData(parsedData, sheetConfig, procedureType) {
+  const rowData = [];
+  
+  // Tạo ID duy nhất
+  const id = Utilities.getUuid();
+  
+  // Mapping dữ liệu theo từng sheet
+  for (const header of sheetConfig.headers) {
+    switch (header) {
+      case 'id':
+        rowData.push(id);
+        break;
+      case 'quet_qrcode_moi':
+        rowData.push(parsedData.quet_qrcode_moi);
+        break;
+      case 'ho_va_ten':
+        rowData.push(parsedData.ho_va_ten);
+        break;
+      case 'ngay_sinh':
+        rowData.push(parsedData.ngay_sinh);
+        break;
+      case 'cccd_quet':
+      case 'cccd_hsm':
+      case 'cccd_hsbs':
+      case 'cccd_tb':
+      case 'cccd':
+        rowData.push(parsedData.cccd_quet);
+        break;
+      case 'ngay_cap':
+        rowData.push(parsedData.ngay_cap);
+        break;
+      case 'cmnd':
+        rowData.push(parsedData.cmnd);
+        break;
+      case 'dia_chi':
+        rowData.push(parsedData.dia_chi);
+        break;
+      case 'thoi_gian':
+        rowData.push(parsedData.thoi_gian);
+        break;
+      case 'so_ban_hsm':
+      case 'so_ban_hsbs':
+      case 'so_ban_tb':
+      case 'so_ban':
+        rowData.push(''); // Cần điền thông tin bổ sung
+        break;
+      case 'thu_tuc_hsm':
+      case 'thu_tuc_hsbs':
+      case 'thu_tuc_tb':
+      case 'thu_tuc':
+        rowData.push(procedureType); // Loại thủ tục
+        break;
+      default:
+        rowData.push('');
+    }
+  }
+  
+  return rowData;
+}
+
+/**
+ * Thêm người vào hàng đợi (giữ nguyên cho tương thích)
  */
 function addToQueue(citizenData) {
   try {
+    // Sử dụng sheet BAN_1 làm hàng đợi mặc định
     const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    let sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
+    let sheet = spreadsheet.getSheetByName(SHEET_CONFIG.BAN_1.name);
     
-    // Tạo sheet nếu chưa có
     if (!sheet) {
-      sheet = spreadsheet.insertSheet(CONFIG.SHEET_NAME);
-      // Thêm header
-      sheet.getRange(1, 1, 1, 8).setValues([[
-        'ID', 'Queue Number', 'Full Name', 'Citizen ID', 'Date of Birth', 
-        'Address', 'Phone', 'Status', 'Created At', 'Updated At'
-      ]]);
+      sheet = createSheetWithHeaders(spreadsheet, SHEET_CONFIG.BAN_1);
     }
     
-    // Lấy số thứ tự tiếp theo
-    const lastRow = sheet.getLastRow();
-    const queueNumber = lastRow; // Số thứ tự = số dòng
-    
-    // Thêm dữ liệu vào sheet
-    const newRow = [
+    // Tạo dữ liệu hàng đợi
+    const rowData = [
       Utilities.getUuid(),
-      queueNumber,
+      '', // quet_qrcode_moi
       citizenData.fullName,
-      citizenData.id,
       citizenData.dateOfBirth,
+      citizenData.id,
+      '', // ngay_cap
+      '', // cmnd
       citizenData.address,
-      citizenData.phone || '',
-      'waiting',
       new Date(),
-      new Date()
+      '', // so_ban
+      'queue' // thu_tuc
     ];
     
-    sheet.appendRow(newRow);
+    sheet.appendRow(rowData);
     
-    // Gửi thông báo đến web app
+    // Gửi thông báo
     sendWebhookNotification({
       type: 'queue_added',
-      queueNumber: queueNumber,
       citizenName: citizenData.fullName
     });
     
     return createResponse({
       success: true,
-      queueNumber: queueNumber,
       message: 'Đã thêm vào hàng đợi thành công'
     });
     
